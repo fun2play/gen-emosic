@@ -29,10 +29,11 @@ This class is intended to be used with a Transformer model that has been
 specifically trained for melody generation tasks.
 """
 
+import numpy as np
 import tensorflow as tf
 from melodypreprocessor import MelodyPreprocessor
 from transformer import Transformer
-from music_utils import save_melody_as_midi
+from music_utils import save_melody_as_midi, midi_to_dataset_format
 from music_utils import convert_midi_to_wav
 
 # Global parameters
@@ -49,10 +50,10 @@ class MelodyGenerator:
     based on a starting sequence.
     """
 
-    def __init__(self, transformer, tokenizer, max_length=50):
+    def __init__(self, transformer, tokenizer, max_length=100): # 50):  TODO maybe try 900 later
         """
-        Initializes the MelodyGenerator.
-
+        MelodyGenerator generates melodies using a trained Transformer model.
+        
         Parameters:
             transformer (Transformer): The trained Transformer model.
             tokenizer (Tokenizer): Tokenizer used for encoding melodies.
@@ -61,21 +62,24 @@ class MelodyGenerator:
         self.transformer = transformer
         self.tokenizer = tokenizer
         self.max_length = max_length
-
-    def generate(self, start_sequence):
+    
+    def generate_melody(self, emotion, start_sequence, temperature=1.0):
         """
-        Generates a melody based on a starting sequence.
-
+        Generate a melody based on the given emotion and start sequence.
+        
         Parameters:
-            start_sequence (list of str): The starting sequence of the melody.
-
+        - emotion: An integer (1,2,3,4) representing the emotion category.
+        - start_sequence: List of tokens representing the initial melody sequence.
+        - temperature: Controls randomness; higher values make the output more random.
+        
         Returns:
-            str: The generated melody.
+        - List of generated melody tokens.
         """
-        input_tensor = self._get_input_tensor(start_sequence)
 
-        num_notes_to_generate = self.max_length - len(input_tensor[0])
-
+        emotion = np.array([[emotion]])  # Shape (1,1)
+        sequence = start_sequence[:]
+        sequence = np.array(sequence).reshape(1, -1)  # Shape (1, seq_len)
+        
         # predictions = transformer(
         #     input,
         #     target=target_input,
@@ -85,19 +89,39 @@ class MelodyGenerator:
         #     dec_padding_mask=None
         # )
 
-
-        for _ in range(num_notes_to_generate):
+        for _ in range(self.max_length - len(start_sequence)):
+            # Convert input to Tensor
+            input_tensor = tf.convert_to_tensor(sequence, dtype=tf.int64)
+            emotion_tensor = tf.convert_to_tensor(emotion, dtype=tf.int64)
+            
+            # Get model predictions
             predictions = self.transformer(
-                input_tensor, target=input_tensor, training=False, enc_padding_mask=None, look_ahead_mask=None, dec_padding_mask=None
-            )
-            predicted_note = self._get_note_with_highest_score(predictions)
-            input_tensor = self._append_predicted_note(
-                input_tensor, predicted_note
+                input_tensor, emotion_tensor, sequence, training=False,
+                enc_padding_mask=None, look_ahead_mask=None, dec_padding_mask=None
             )
 
-        generated_melody = self._decode_generated_sequence(input_tensor)
+            predictions = predictions[:, -1, :]  # Take the last time step
+            predictions = predictions / temperature  # Adjust randomness
+            
+            # Sample next token
+            predicted_id = tf.random.categorical(predictions, num_samples=1).numpy()[0, 0]
+            
+            # Stop if end token is reached
+            if predicted_id == self.tokenizer.end_token:
+                break
+            
+            # Append predicted token to sequence
+            sequence = np.append(sequence, [[predicted_id]], axis=1)
 
-        return generated_melody
+#            predicted_note = self._get_note_with_highest_score(predictions)
+#            input_tensor = self._append_predicted_note(
+#                input_tensor, predicted_note
+#            )
+
+#        generated_melody = self._decode_generated_sequence(input_tensor)
+
+#        return generated_melody
+        return sequence[0].tolist()  # Return generated melody tokens
 
     def _get_input_tensor(self, start_sequence):
         """
@@ -158,14 +182,14 @@ class MelodyGenerator:
 
 if __name__ == "__main__":
     melody_preprocessor = MelodyPreprocessor(DATA_PATH, batch_size=BATCH_SIZE)
-    train_dataset = melody_preprocessor.create_training_dataset()
-    vocab_size = melody_preprocessor.number_of_tokens_with_padding
+    vocab_size = 500 # melody_preprocessor.number_of_tokens_with_padding
 
     transformer_model = Transformer(
         num_layers=2,
         d_model=64,
         num_heads=2,
         d_feedforward=128,
+        emotion_vocab_size=5,  # Emotion tokens are from 1 to 4
         input_vocab_size=vocab_size,
         target_vocab_size=vocab_size,
         max_num_positions_in_pe_encoder=MAX_POSITIONS_IN_POSITIONAL_ENCODING,
@@ -173,14 +197,18 @@ if __name__ == "__main__":
         dropout_rate=0.1,
     )
 
-    # train(train_dataset, transformer=transformer_model, epochs=EPOCHS)
-
     print("Generating a melody...")
     melody_generator = MelodyGenerator(
         transformer_model, melody_preprocessor.tokenizer
     )
-    start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
-    new_melody = melody_generator.generate(start_sequence)
+
+    # input for generation
+    seedfilepathname = "data/input/seed/seed_Q1.mid"
+    emotion_label = 1
+
+    start_sequence = midi_to_dataset_format(seedfilepathname)
+    # start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
+    new_melody = melody_generator.generate_melody(emotion_label, start_sequence)
     print(f"Generated melody: {new_melody}")
 
     save_melody_as_midi(new_melody, "generated_melody.mid")

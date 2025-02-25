@@ -16,10 +16,11 @@ def save_melody_as_midi(melody, filename="generated_melody.mid"):
     """
     midi_stream = stream.Stream()
 
-    melody_list = melody.split()
+    melody_list = melody[0].split(",")
     for item in melody_list:
-        pitch, duration = item.split('-')  # Example: "C4-1.0" → "C4", "1.0"
-        duration = float(duration)  # Convert duration to float
+        pitch, duration = item.rsplit('-',1)  # Example: "C4-1.0" → "C4", "1.0"
+        pitch = pitch.replace('-', '') # TODO hack E-4 to E4
+        duration = eval(duration)  # Convert duration to float
 
         # Create a music21 Note and set its duration
         n = note.Note(pitch)

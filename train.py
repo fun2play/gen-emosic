@@ -26,14 +26,13 @@ The script concludes by instantiating the Transformer model, conducting the trai
 and generating a sample melody using the trained model.
 """
 
+import os
 import tensorflow as tf
 from keras.losses import SparseCategoricalCrossentropy
 from keras.optimizers import Adam
 from melodygenerator import MelodyGenerator
 from melodypreprocessor import MelodyPreprocessor
 from transformer import Transformer
-from music_utils import save_melody_as_midi
-from music_utils import convert_midi_to_wav
 
 # Bill added
 # from tensorflow.keras.preprocessing.text import Tokenizer
@@ -55,12 +54,18 @@ from music_utils import convert_midi_to_wav
 # print("Num CPUs Available:", len(tf.config.list_physical_devices('CPU')))
 
 
+# Define the checkpoint directory
+CHECKPOINT_DIR = "./checkpoints"
+CHECKPOINT_PREFIX = os.path.join(CHECKPOINT_DIR, "ckpt")
+
+# Ensure directory exists
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Global parameters
 EPOCHS = 10
 BATCH_SIZE = 32
 DATA_PATH = "data/input/midi" # "dataset.json"
-MAX_POSITIONS_IN_POSITIONAL_ENCODING = 900 # 100
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 900 # 100  900 is critical part to make training with shape mismatch issue
 
 # Loss function and optimizer
 sparse_categorical_crossentropy = SparseCategoricalCrossentropy(
@@ -68,8 +73,7 @@ sparse_categorical_crossentropy = SparseCategoricalCrossentropy(
 )
 optimizer = Adam()
 
-
-def train(train_dataset, transformer, epochs):
+def train(train_dataset, transformer, epochs, checkpoint):
     """
     Trains the Transformer model on a given dataset for a specified number of epochs.
 
@@ -77,6 +81,7 @@ def train(train_dataset, transformer, epochs):
         train_dataset (tf.data.Dataset): The training dataset.
         transformer (Transformer): The Transformer model instance.
         epochs (int): The number of epochs to train the model.
+        checkpoint (tf.train.Checkpoint): The checkpoint manager for saving model states.
     """
     print("Training the model...")
     for epoch in range(epochs):
@@ -86,10 +91,11 @@ def train(train_dataset, transformer, epochs):
             # Perform a single training step
             batch_loss = _train_step(input, emotion=emotion, target=target, transformer=transformer)
             total_loss += batch_loss
-            print(
-                f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}"
-            )
+            print(f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}")
 
+        # Save the model after every epoch
+        checkpoint.save(file_prefix=CHECKPOINT_PREFIX)
+        print(f"Checkpoint saved at epoch {epoch + 1}")
 
 @tf.function
 def _train_step(input, emotion, target, transformer):
@@ -224,15 +230,11 @@ if __name__ == "__main__":
         dropout_rate=0.1,
     )
 
-    train(train_dataset, transformer=transformer_model, epochs=EPOCHS)
+    # Create a Checkpoint Manager
+    checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=transformer_model)
+    # Load the latest checkpoint
+    checkpoint.restore(tf.train.latest_checkpoint(CHECKPOINT_DIR))
+    print("Checkpoint restored, resuming training...")
 
-    print("Generating a melody...")
-    melody_generator = MelodyGenerator(
-        transformer_model, melody_preprocessor.tokenizer
-    )
-    start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
-    new_melody = melody_generator.generate(start_sequence)
-    print(f"Generated melody: {new_melody}")
-
-    save_melody_as_midi(new_melody, "generated_melody.mid")
-    convert_midi_to_wav("generated_melody.mid", "generated_melody.wav")
+    # Train and save after each epoch
+    train(train_dataset, transformer=transformer_model, epochs=EPOCHS, checkpoint=checkpoint)
