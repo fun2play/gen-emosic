@@ -32,6 +32,11 @@ from keras.optimizers import Adam
 from melodygenerator import MelodyGenerator
 from melodypreprocessor import MelodyPreprocessor
 from transformer import Transformer
+from music_utils import save_melody_as_midi
+from music_utils import convert_midi_to_wav
+
+# Bill added
+# from tensorflow.keras.preprocessing.text import Tokenizer
 
 # Global parameters
 EPOCHS = 10
@@ -61,7 +66,7 @@ def train(train_dataset, transformer, epochs):
         # Iterate over each batch in the training dataset
         for (batch, (input, target)) in enumerate(train_dataset):
             # Perform a single training step
-            batch_loss = _train_step(input, target, transformer)
+            batch_loss = _train_step(input, target=target, transformer=transformer)
             total_loss += batch_loss
             print(
                 f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}"
@@ -85,14 +90,30 @@ def _train_step(input, target, transformer):
     # Pad the sequences on the right by one position
     target_input = _right_pad_sequence_once(target[:, :-1])
     target_real = _right_pad_sequence_once(target[:, 1:])
-
+    """ From Youtube:
+        input [1, 2, 3, 4]
+        target [2, 3, 4, 5]
+        target_input [2, 3, 4, 0]
+        target_real  [3, 4, 5, 0]
+    """
     # Open a GradientTape to record the operations run
     # during the forward pass, which enables auto-differentiation
     with tf.GradientTape() as tape:
         # Forward pass through the transformer model
         # TODO: Add padding mask for encoder + decoder and look-ahead mask
         # for decoder
-        predictions = transformer(input, target_input, True, None, None, None)
+        # predictions = transformer(input, target_input, True, None, None, None)
+        # enc_padding_mask = create_padding_mask(input)
+        # look_ahead_mask = create_look_ahead_mask(tf.shape(target_input)[1])
+        # dec_padding_mask = create_padding_mask(target_input)
+        predictions = transformer(
+            input,
+            target=target_input,
+            training=True,
+            enc_padding_mask=None,
+            look_ahead_mask=None,
+            dec_padding_mask=None
+        )
 
         # Compute loss between the real output and the predictions
         loss = _calculate_loss(target_real, predictions)
@@ -107,6 +128,17 @@ def _train_step(input, target, transformer):
     # Return the computed loss for this training step
     return loss
 
+# def create_padding_mask(seq):
+#     # Create a mask for padding (0 values in the sequence).
+#     # Output shape: (batch_size, 1, 1, seq_len)
+#     mask = tf.cast(tf.math.equal(seq, 0), tf.float32)
+#     return mask[:, tf.newaxis, tf.newaxis, :]  # Add extra dimensions for compatibility
+#
+# def create_look_ahead_mask(size):
+#     # Create a triangular matrix with 1s in the upper-right triangle
+#     # This mask ensures the model cannot look ahead in the sequence
+#     mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+#     return mask  # Shape: (seq_len, seq_len)
 
 def _calculate_loss(real, pred):
     """
@@ -171,7 +203,7 @@ if __name__ == "__main__":
         dropout_rate=0.1,
     )
 
-    train(train_dataset, transformer_model, EPOCHS)
+    train(train_dataset, transformer=transformer_model, epochs=EPOCHS)
 
     print("Generating a melody...")
     melody_generator = MelodyGenerator(
@@ -180,3 +212,6 @@ if __name__ == "__main__":
     start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
     new_melody = melody_generator.generate(start_sequence)
     print(f"Generated melody: {new_melody}")
+
+    save_melody_as_midi(new_melody, "generated_melody.mid")
+    convert_midi_to_wav("generated_melody.mid", "generated_melody.wav")

@@ -30,7 +30,16 @@ specifically trained for melody generation tasks.
 """
 
 import tensorflow as tf
+from melodypreprocessor import MelodyPreprocessor
+from transformer import Transformer
+from music_utils import save_melody_as_midi
+from music_utils import convert_midi_to_wav
 
+# Global parameters
+EPOCHS = 10
+BATCH_SIZE = 32
+DATA_PATH = "dataset.json"
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 100
 
 class MelodyGenerator:
     """
@@ -67,9 +76,19 @@ class MelodyGenerator:
 
         num_notes_to_generate = self.max_length - len(input_tensor[0])
 
+        # predictions = transformer(
+        #     input,
+        #     target=target_input,
+        #     training=True,
+        #     enc_padding_mask=None,
+        #     look_ahead_mask=None
+        #     dec_padding_mask=None
+        # )
+
+
         for _ in range(num_notes_to_generate):
             predictions = self.transformer(
-                input_tensor, input_tensor, False, None, None, None
+                input_tensor, target=input_tensor, training=False, enc_padding_mask=None, look_ahead_mask=None, dec_padding_mask=None
             )
             predicted_note = self._get_note_with_highest_score(predictions)
             input_tensor = self._append_predicted_note(
@@ -136,3 +155,33 @@ class MelodyGenerator:
             generated_sequence_array
         )[0]
         return generated_melody
+
+if __name__ == "__main__":
+    melody_preprocessor = MelodyPreprocessor(DATA_PATH, batch_size=BATCH_SIZE)
+    train_dataset = melody_preprocessor.create_training_dataset()
+    vocab_size = melody_preprocessor.number_of_tokens_with_padding
+
+    transformer_model = Transformer(
+        num_layers=2,
+        d_model=64,
+        num_heads=2,
+        d_feedforward=128,
+        input_vocab_size=vocab_size,
+        target_vocab_size=vocab_size,
+        max_num_positions_in_pe_encoder=MAX_POSITIONS_IN_POSITIONAL_ENCODING,
+        max_num_positions_in_pe_decoder=MAX_POSITIONS_IN_POSITIONAL_ENCODING,
+        dropout_rate=0.1,
+    )
+
+    # train(train_dataset, transformer=transformer_model, epochs=EPOCHS)
+
+    print("Generating a melody...")
+    melody_generator = MelodyGenerator(
+        transformer_model, melody_preprocessor.tokenizer
+    )
+    start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
+    new_melody = melody_generator.generate(start_sequence)
+    print(f"Generated melody: {new_melody}")
+
+    save_melody_as_midi(new_melody, "generated_melody.mid")
+    convert_midi_to_wav("generated_melody.mid", "generated_melody.wav")
