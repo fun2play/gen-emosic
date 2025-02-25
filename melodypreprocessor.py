@@ -23,22 +23,20 @@ To use the MelodyPreprocessor, initialize it with the path to a dataset containi
 melodies and the desired batch size. Then call `create_training_dataset` to prepare
 the dataset for training a Transformer model.
 
-
 Note:
 This script is intended to be used with datasets containing melody sequences in a
 specific format, where each melody is represented as a string of comma-separated
 musical notes (pitch with octave + duration in quarter length).
 """
-
-
 import json
 
 import numpy as np
 import tensorflow as tf
 
+from music_utils import midi_to_dataset_format
+
 # from keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.text import Tokenizer
-
 
 class MelodyPreprocessor:
     """
@@ -82,22 +80,19 @@ class MelodyPreprocessor:
             tf_training_dataset: A TensorFlow dataset containing input-target
                 pairs suitable for training a sequence-to-sequence model.
         """
-        dataset = self._load_dataset()
-        parsed_melodies = [self._parse_melody(melody) for melody in dataset]
-        tokenized_melodies = self._tokenize_and_encode_melodies(
-            parsed_melodies
-        )
-        self._set_max_melody_length(tokenized_melodies)
+        dataset_with_emotions = self._load_dataset_with_emotions()  # Use emotion-tagged dataset
+        parsed_melodies = [(emotion, self._parse_melody(melody)) for emotion, melody in dataset_with_emotions]
+        tokenized_melodies = [(emotion, self._tokenize_and_encode_melody(emotion, melody)) for emotion, melody in parsed_melodies] # TODO [(3,[]),(...
+
+        self._set_max_melody_length([melody for _, melody in tokenized_melodies])
         self._set_number_of_tokens()
-        input_sequences, target_sequences = self._create_sequence_pairs(
-            tokenized_melodies
-        )
-        tf_training_dataset = self._convert_to_tf_dataset(
-            input_sequences, target_sequences
-        )
+
+        input_sequences, emotion_sequences, target_sequences = self._create_sequence_pairs(tokenized_melodies)
+
+        tf_training_dataset = self._convert_to_tf_dataset(input_sequences, emotion_sequences, target_sequences)
         return tf_training_dataset
 
-    def _load_dataset(self):
+    def _load_dataset(self): # TODO to be removed as it's replaced by _load_dataset_with_emotions
         """
         Loads the melody dataset from a JSON file.
 
@@ -106,6 +101,29 @@ class MelodyPreprocessor:
         """
         with open(self.dataset_path, "r") as f:
             return json.load(f)
+
+    def _load_dataset_with_emotions(self):
+        """
+        Loads melodies from dataset and adds emotion labels based on filenames.
+
+        Returns:
+            list: A list of melodies with emotion labels.
+        """
+        import os
+        dataset = []
+        midi_folder = self.dataset_path
+
+        for filename in os.listdir(midi_folder):
+            if filename.endswith(".mid") or filename.endswith(".midi"):
+                if len(filename) >= 4:  # like "Q3_asdfasfas"
+                    emotion = filename[1]  # filename.split("_")[0]  # Extract Q1, Q2, Q3, or Q4
+                else:
+                    continue
+                melody = midi_to_dataset_format(os.path.join(midi_folder, filename))
+                dataset.append((emotion, melody))
+                # dataset.append(f"{emotion}, {melody}")
+
+        return dataset
 
     def _parse_melody(self, melody_str):
         """
@@ -119,18 +137,34 @@ class MelodyPreprocessor:
         """
         return melody_str.split(", ")
 
-    def _tokenize_and_encode_melodies(self, melodies):
+    def _tokenize_and_encode_melody(self, emotion, melody):
         """
-        Tokenizes and encodes a list of melodies.
+        Tokenizes and encodes a single melody.
 
         Parameters:
-            melodies (list): A list of melodies to be tokenized and encoded.
+            melody (list): A melody sequence as a list of notes.
 
         Returns:
-            tokenized_melodies: A list of tokenized and encoded melodies.
+            list: Tokenized and encoded melody.
         """
-        self.tokenizer.fit_on_texts(melodies)
-        tokenized_melodies = self.tokenizer.texts_to_sequences(melodies)
+        self.tokenizer.fit_on_texts(list(emotion)) # emotions))  # Train on both melodies and emotions
+        self.tokenizer.fit_on_texts(list(melody))  # Train on both melodies and emotions
+        return self.tokenizer.texts_to_sequences([melody])[0]  # Convert melody to tokens
+
+    def _tokenize_and_encode_melodies(self, melodies_with_emotions):
+        """
+        Tokenizes melodies and includes emotion labels in the tokenizer.
+
+        Parameters:
+            melodies_with_emotions (list): List of (emotion, melody) pairs.
+
+        Returns:
+            tokenized_melodies: A list of tokenized melodies.
+        """
+        emotions, melodies = zip(*melodies_with_emotions)  # Separate emotions and melodies
+        self.tokenizer.fit_on_texts(melodies + list(emotions))  # Train on both melodies and emotions
+        tokenized_melodies = [(emotion, self.tokenizer.texts_to_sequences([melody])[0]) for emotion, melody in
+                              melodies_with_emotions]
         return tokenized_melodies
 
     def _set_max_melody_length(self, melodies):
@@ -148,26 +182,38 @@ class MelodyPreprocessor:
         """
         self.number_of_tokens = len(self.tokenizer.word_index)
 
-    def _create_sequence_pairs(self, melodies):
+    def _create_sequence_pairs(self, melodies_with_emotions):
         """
         Creates input-target pairs from tokenized melodies.
 
         Parameters:
-            melodies (list): A list of tokenized melodies.
+            melodies_with_emotions (list): A list of (emotion, tokenized_melody) tuples.
 
         Returns:
-            tuple: Two numpy arrays representing input sequences and target sequences.
+            tuple: Three numpy arrays representing input sequences, emotion sequences, and target sequences.
         """
-        input_sequences, target_sequences = [], []
-        for melody in melodies:
+        input_sequences, target_sequences, emotion_sequences = [], [], []
+
+        for emotion, melody in melodies_with_emotions:
+            # tokenized_melody = self.tokenizer.texts_to_sequences([melody])[0]
+            emotion_token = self.tokenizer.texts_to_sequences([emotion])
+            if emotion_token and emotion_token[0]:  # Ensure the token exists
+                emotion_token = emotion_token[0][0]
+            else:
+                raise ValueError(f"Emotion '{emotion}' was not found in tokenizer vocabulary.")
+
             for i in range(1, len(melody)):
                 input_seq = melody[:i]
-                target_seq = melody[1 : i + 1]  # Shifted by one time step
+                target_seq = melody[1:i + 1]
+
                 padded_input_seq = self._pad_sequence(input_seq)
                 padded_target_seq = self._pad_sequence(target_seq)
+
                 input_sequences.append(padded_input_seq)
                 target_sequences.append(padded_target_seq)
-        return np.array(input_sequences), np.array(target_sequences)
+                emotion_sequences.append(emotion_token)
+
+        return np.array(input_sequences), np.array(emotion_sequences), np.array(target_sequences)
 
     def _pad_sequence(self, sequence):
         """
@@ -181,25 +227,23 @@ class MelodyPreprocessor:
         """
         return sequence + [0] * (self.max_melody_length - len(sequence))
 
-    def _convert_to_tf_dataset(self, input_sequences, target_sequences):
+    def _convert_to_tf_dataset(self, input_sequences, emotion_sequences, target_sequences):
         """
-        Converts input and target sequences to a TensorFlow Dataset.
-
+        Converts input, emotion, and target sequences to a TensorFlow Dataset.
         Parameters:
             input_sequences (list): Input sequences for the model.
+            emotion_sequences (list): Emotion sequences for the model.
             target_sequences (list): Target sequences for the model.
 
         Returns:
-            batched_dataset (tf.data.Dataset): A batched and shuffled
-                TensorFlow Dataset.
+            batched_dataset (tf.data.Dataset): A batched and shuffled TensorFlow Dataset.
         """
         dataset = tf.data.Dataset.from_tensor_slices(
-            (input_sequences, target_sequences)
+            (input_sequences, emotion_sequences, target_sequences)
         )
         shuffled_dataset = dataset.shuffle(buffer_size=1000)
         batched_dataset = shuffled_dataset.batch(self.batch_size)
         return batched_dataset
-
 
 if __name__ == "__main__":
     # Usage example

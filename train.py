@@ -38,11 +38,29 @@ from music_utils import convert_midi_to_wav
 # Bill added
 # from tensorflow.keras.preprocessing.text import Tokenizer
 
+# import os
+#
+# total_CPU_threads_to_use = 16
+# # Set TensorFlow to use all CPU threads
+# os.environ["TF_NUM_INTEROP_THREADS"] = str(total_CPU_threads_to_use)  # Parallel execution of independent operations
+# os.environ["TF_NUM_INTRAOP_THREADS"] = str(total_CPU_threads_to_use)  # Parallel execution within an operation
+#
+# # Optionally, disable GPU usage if you want pure CPU execution
+# # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+#
+# # Log CPU settings
+# tf.config.threading.set_inter_op_parallelism_threads(total_CPU_threads_to_use)  # Parallel execution of independent ops
+# tf.config.threading.set_intra_op_parallelism_threads(total_CPU_threads_to_use)  # Parallel execution within an op
+#
+# print("Num CPUs Available:", len(tf.config.list_physical_devices('CPU')))
+
+
+
 # Global parameters
 EPOCHS = 10
 BATCH_SIZE = 32
-DATA_PATH = "dataset.json"
-MAX_POSITIONS_IN_POSITIONAL_ENCODING = 100
+DATA_PATH = "data/input/midi" # "dataset.json"
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 900 # 100
 
 # Loss function and optimizer
 sparse_categorical_crossentropy = SparseCategoricalCrossentropy(
@@ -64,9 +82,9 @@ def train(train_dataset, transformer, epochs):
     for epoch in range(epochs):
         total_loss = 0
         # Iterate over each batch in the training dataset
-        for (batch, (input, target)) in enumerate(train_dataset):
+        for (batch, (input, emotion, target)) in enumerate(train_dataset):
             # Perform a single training step
-            batch_loss = _train_step(input, target=target, transformer=transformer)
+            batch_loss = _train_step(input, emotion=emotion, target=target, transformer=transformer)
             total_loss += batch_loss
             print(
                 f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}"
@@ -74,7 +92,7 @@ def train(train_dataset, transformer, epochs):
 
 
 @tf.function
-def _train_step(input, target, transformer):
+def _train_step(input, emotion, target, transformer):
     """
     Performs a single training step for the Transformer model.
 
@@ -96,6 +114,7 @@ def _train_step(input, target, transformer):
         target_input [2, 3, 4, 0]
         target_real  [3, 4, 5, 0]
     """
+    emotion_input = tf.expand_dims(emotion, axis=1)  # Add sequence dimension
     # Open a GradientTape to record the operations run
     # during the forward pass, which enables auto-differentiation
     with tf.GradientTape() as tape:
@@ -108,6 +127,7 @@ def _train_step(input, target, transformer):
         # dec_padding_mask = create_padding_mask(target_input)
         predictions = transformer(
             input,
+            emotion=emotion_input,
             target=target_input,
             training=True,
             enc_padding_mask=None,
@@ -196,6 +216,7 @@ if __name__ == "__main__":
         d_model=64,
         num_heads=2,
         d_feedforward=128,
+        emotion_vocab_size=vocab_size,
         input_vocab_size=vocab_size,
         target_vocab_size=vocab_size,
         max_num_positions_in_pe_encoder=MAX_POSITIONS_IN_POSITIONAL_ENCODING,

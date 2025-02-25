@@ -99,6 +99,7 @@ class Transformer(tf.keras.Model):
         d_model,
         num_heads,
         d_feedforward,
+        emotion_vocab_size,
         input_vocab_size,
         target_vocab_size,
         max_num_positions_in_pe_encoder,
@@ -119,6 +120,8 @@ class Transformer(tf.keras.Model):
             dropout_rate (float): Dropout dropout_rate.
         """
         super(Transformer, self).__init__()
+        self.emotion_embedding = Embedding(emotion_vocab_size, d_model)
+        self.melody_embedding = Embedding(input_vocab_size, d_model)
         self.encoder = Encoder(
             num_layers,
             d_model,
@@ -143,6 +146,7 @@ class Transformer(tf.keras.Model):
     def call(
         self,
         input,
+        emotion,
         target,
         training,
         enc_padding_mask,
@@ -164,17 +168,55 @@ class Transformer(tf.keras.Model):
             Tensor: The final output of the Transformer.
             dict: Attention weights from the Decoder layers.
         """
+        # 1. Embed the melody tokens yourself:
+        melody_emb = self.melody_embedding(input)
+        #    shape: (batch_size, seq_len, d_model)
+
+        # 2. Embed the emotion tokens yourself:
+        emotion_emb = self.emotion_embedding(emotion)
+        #    shape: (batch_size, 1, d_model)
+
+        # 3. Expand or broadcast emotion to match (batch_size, seq_len, d_model)
+        #    or insert it the way you prefer. Here we do a broadcast:
+        emotion_emb_expanded = tf.broadcast_to(emotion_emb, tf.shape(melody_emb))
+        #    Now emotion_emb_expanded is also (batch_size, seq_len, d_model)
+
+        # 4. Combine them: e.g. add them
+        #    (Alternatively, you can do a concatenation if that’s your approach.)
+        input_with_emotion = melody_emb + emotion_emb_expanded
+        #    shape: (batch_size, seq_len, d_model)
+        # input_with_emotion = tf.concat([emotion_emb, input_emb], axis=1)
+
+        print(f"Input shape: {input.shape}")  # Should match expected batch size
+        print(f"Emotion shape: {emotion.shape}")  # Should be (batch_size, 1)
+        print(f"Target shape: {target.shape}")  # Should match input
+        print(f"Input embedding shape: {melody_emb.shape}")  # Check if matches d_model
+        print(f"Emotion embedding shape: {emotion_emb.shape}")
+        print(f"Input with emotion shape: {input_with_emotion.shape}")  # Should be same shape as input
+        print(f"Encoder positional encoding shape: {self.encoder.pos_encoding.shape}")
+
+        # 5. Pass the pre-embedded float to the encoder (which no longer does embedding):
         enc_output = self.encoder(
-            input, training=training, mask=enc_padding_mask
-        )  # (batch_size, input_seq_len, d_model)
+            input_with_emotion,
+            training=training,
+            mask=enc_padding_mask
+        )
+        #    shape: (batch_size, seq_len, d_model)
+
+        # 6. The decoder can still do its own embedding if you want:
+        #    For example, if `target` is integer IDs:
         dec_output = self.decoder(
-            target, enc_output=enc_output, training=training, look_ahead_mask=look_ahead_mask, padding_mask=dec_padding_mask
-        )  # (batch_size, tar_seq_len, d_model)
+            target,
+            enc_output=enc_output,
+            training=training,
+            look_ahead_mask=look_ahead_mask,
+            padding_mask=dec_padding_mask
+        )
+        #    shape: (batch_size, target_seq_len, d_model)
 
-        logits = self.final_layer(
-            dec_output
-        )  # (batch_size, target_seq_len, target_vocab_size)
-
+        # 7. Final linear projection:
+        logits = self.final_layer(dec_output)
+        # print(f"Encoder output shape: {enc_output.shape}")
         return logits
 
 
@@ -230,9 +272,16 @@ class Encoder(tf.keras.layers.Layer):
         Returns:
             Tensor: Output of the Encoder.
         """
-        x = self.embedding(x)  # (batch_size, input_seq_len, d_model)
+        # x = self.embedding(x)  # (batch_size, input_seq_len, d_model)
+
+        # (1) Remove or comment out the encoder’s own embedding step:
+        # x = self.embedding(x)
+
+        # x is already a float of shape (batch, seq_len, d_model)
+        # (2) We can still scale by sqrt(d_model) if you like that convention:
         x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
 
+        # (3) Add positional encoding:
         sliced_pos_encoding = self._get_sliced_positional_encoding(x)
         x += sliced_pos_encoding
 
@@ -245,7 +294,8 @@ class Encoder(tf.keras.layers.Layer):
 
     def _get_sliced_positional_encoding(self, x):
         """
-        Get a slice of the full positional encoding.
+        Dynamically adjust positional encoding size to match input sequence length.
+        Note original "Get a slice of the full positional encoding."
 
         Patameters:
             x (Tensor): Input tensor.
@@ -253,9 +303,15 @@ class Encoder(tf.keras.layers.Layer):
         Returns:
             Tensor: A slice of the full positional encoding.
         """
-        number_of_tokens = x.shape[1]
-        return self.pos_encoding[:, :number_of_tokens, :]
+        # number_of_tokens = x.shape[1]
+        # return self.pos_encoding[:, :number_of_tokens, :]
+        number_of_tokens = tf.shape(x)[1]  # Dynamically get the sequence length
+        max_positions = tf.shape(self.pos_encoding)[1]  # Get max precomputed positions
 
+        # Ensure that we do not exceed the positional encoding range
+        num_tokens_clamped = tf.minimum(number_of_tokens, max_positions)
+
+        return self.pos_encoding[:, :num_tokens_clamped, :]
 
 class Decoder(tf.keras.layers.Layer):
     """
@@ -330,7 +386,8 @@ class Decoder(tf.keras.layers.Layer):
 
     def _get_sliced_positional_encoding(self, x):
         """
-        Get a slice of the full positional encoding.
+        Dynamically adjust positional encoding size to match input sequence length.
+        Not original "Get a slice of the full positional encoding."
 
         Patameters:
             x (Tensor): Input tensor.
@@ -338,8 +395,15 @@ class Decoder(tf.keras.layers.Layer):
         Returns:
             Tensor: A slice of the full positional encoding.
         """
-        number_of_tokens = x.shape[1]
-        return self.pos_encoding[:, :number_of_tokens, :]
+        # number_of_tokens = x.shape[1]
+        # return self.pos_encoding[:, :number_of_tokens, :]
+        number_of_tokens = tf.shape(x)[1]  # Dynamically get the sequence length
+        max_positions = tf.shape(self.pos_encoding)[1]  # Get max precomputed positions
+
+        # Ensure that we do not exceed the positional encoding range
+        num_tokens_clamped = tf.minimum(number_of_tokens, max_positions)
+
+        return self.pos_encoding[:, :num_tokens_clamped, :]
 
 
 class EncoderLayer(tf.keras.layers.Layer):

@@ -3,6 +3,8 @@ from midi2audio import FluidSynth
 import numpy as np
 import subprocess
 
+from music21 import converter, note, chord
+import json
 
 def save_melody_as_midi(melody, filename="generated_melody.mid"):
     """
@@ -57,3 +59,51 @@ def convert_midi_to_wav(midi_filename="generated_melody.mid", wav_filename="gene
 
     print(f"Successfully converted '{midi_filename}' to '{wav_filename}'")
 
+
+def midi_to_dataset_format(midi_file):
+    """
+    Converts a MIDI file to the dataset.json format.
+
+    Parameters:
+        midi_file (str): Path to the MIDI file.
+
+    Returns:
+        str: A string of note-duration pairs separated by commas.
+    """
+    midi = converter.parse(midi_file)
+    notes = []
+
+    for element in midi.recurse():
+        if isinstance(element, note.Note):
+            pitch = element.pitch.nameWithOctave
+            duration = element.quarterLength
+            notes.append(f"{pitch}-{duration}")
+        elif isinstance(element, chord.Chord):
+            # For chords, choose the root note
+            pitch = element.root().nameWithOctave
+            duration = element.quarterLength
+            notes.append(f"{pitch}-{duration}")
+
+    return ", ".join(notes)
+
+
+def save_as_json(midi_files, output_file="converted_dataset.json"):
+    """
+    Converts a list of MIDI files to dataset format and saves them as JSON.
+
+    Parameters:
+        midi_files (list): List of MIDI file paths.
+        output_file (str): Path to save the JSON file.
+    """
+    dataset = [midi_to_dataset_format(midi) for midi in midi_files]
+
+    with open(output_file, "w") as f:
+        json.dump(dataset, f, indent=4)
+
+    print(f"Dataset saved to {output_file}")
+
+if __name__ == "__main__":
+    # Example usage:
+    # Provide a list of MIDI files to convert
+    midi_files = ["example1.mid", "example2.mid"]
+    save_as_json(midi_files, output_file="converted_dataset.json")

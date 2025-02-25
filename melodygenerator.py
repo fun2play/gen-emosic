@@ -39,7 +39,7 @@ from music_utils import convert_midi_to_wav
 EPOCHS = 10
 BATCH_SIZE = 32
 DATA_PATH = "dataset.json"
-MAX_POSITIONS_IN_POSITIONAL_ENCODING = 100
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 900 # 100
 
 class MelodyGenerator:
     """
