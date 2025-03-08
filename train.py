@@ -33,6 +33,8 @@ from keras.optimizers import Adam
 from melodygenerator import MelodyGenerator
 from melodypreprocessor import MelodyPreprocessor
 from transformer import Transformer
+from datetime import datetime
+from music_utils import midi_to_tokens, tokens_to_midi
 
 # Bill added
 # from tensorflow.keras.preprocessing.text import Tokenizer
@@ -55,17 +57,16 @@ from transformer import Transformer
 
 
 # Define the checkpoint directory
-CHECKPOINT_DIR = "./checkpoints"
+CHECKPOINT_DIR = "checkpoints"
 CHECKPOINT_PREFIX = os.path.join(CHECKPOINT_DIR, "ckpt")
-
 # Ensure directory exists
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Global parameters
-EPOCHS = 10
+EPOCHS = 1 # 10
 BATCH_SIZE = 32
 DATA_PATH = "data/input/midi" # "dataset.json"
-MAX_POSITIONS_IN_POSITIONAL_ENCODING = 900 # 100  900 is critical part to make training with shape mismatch issue
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 3000 # 1500 # 1000 # 900 # 100  900 is critical part to make training with shape mismatch issue
 
 # Loss function and optimizer
 sparse_categorical_crossentropy = SparseCategoricalCrossentropy(
@@ -91,11 +92,12 @@ def train(train_dataset, transformer, epochs, checkpoint):
             # Perform a single training step
             batch_loss = _train_step(input, emotion=emotion, target=target, transformer=transformer)
             total_loss += batch_loss
-            print(f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}")
+            print(datetime.now(), f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}")
 
         # Save the model after every epoch
         checkpoint.save(file_prefix=CHECKPOINT_PREFIX)
-        print(f"Checkpoint saved at epoch {epoch + 1}")
+        # checkpoint_callback.on_epoch_end(epoch, logs={'loss': total_loss.numpy()})
+        print(datetime.now(), f"Checkpoint saved at epoch {epoch + 1}")
 
 @tf.function
 def _train_step(input, emotion, target, transformer):
@@ -213,8 +215,10 @@ def _right_pad_sequence_once(sequence):
 
 
 if __name__ == "__main__":
+    print("Start train.py: ", datetime.now())
     melody_preprocessor = MelodyPreprocessor(DATA_PATH, batch_size=BATCH_SIZE)
     train_dataset = melody_preprocessor.create_training_dataset()
+    print("finished : melody_preprocessor.create_training_dataset() ", datetime.now())
     vocab_size = melody_preprocessor.number_of_tokens_with_padding
 
     transformer_model = Transformer(
@@ -232,9 +236,55 @@ if __name__ == "__main__":
 
     # Create a Checkpoint Manager
     checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=transformer_model)
+    checkpoint_manager = tf.train.CheckpointManager(checkpoint, CHECKPOINT_DIR, max_to_keep=5)
     # Load the latest checkpoint
-    checkpoint.restore(tf.train.latest_checkpoint(CHECKPOINT_DIR))
-    print("Checkpoint restored, resuming training...")
+    if tf.train.latest_checkpoint(CHECKPOINT_DIR):
+        checkpoint.restore(tf.train.latest_checkpoint(CHECKPOINT_DIR))
+        print("Checkpoint restored. Resuming training from latest checkpoint...")
+    else:
+        print("No checkpoint found. Starting training from scratch...")
 
     # Train and save after each epoch
     train(train_dataset, transformer=transformer_model, epochs=EPOCHS, checkpoint=checkpoint)
+
+    print("Done with training: ", datetime.now())
+
+
+
+    print("Generating a melody...")
+    melody_generator = MelodyGenerator(
+        transformer_model, melody_preprocessor.tokenizer, 2500
+    )
+
+    generate_music = True
+    generate_num = 1
+    while generate_music and generate_num <= 5:
+        # input for generation
+        seedfilepathname = "data/input/midi_200/Q3_c6CwY8Gbw0c_3.mid" # "data/input/seed/seed_Q4.mid"
+        # seedfilepathname = "generated_melody_Q3.mid"
+        emotion_label = 3
+
+        start_sequence = midi_to_tokens(seedfilepathname)
+        # start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
+
+        # # Create a Checkpoint Manager
+        # checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=transformer_model)
+        # checkpoint_manager = tf.train.CheckpointManager(checkpoint, CHECKPOINT_DIR, max_to_keep=5)
+        # # Load the latest checkpoint
+        # if tf.train.latest_checkpoint(CHECKPOINT_DIR):
+        #     checkpoint.restore(tf.train.latest_checkpoint(CHECKPOINT_DIR))
+        #     print("Checkpoint restored. Resuming training from latest checkpoint...")
+        # else:
+        #     print("No checkpoint found. Starting training from scratch...")
+
+        new_melody = melody_generator.generate_melody(emotion_label, start_sequence)
+        print(f"Generated melody: {new_melody}")
+
+        tokens_to_midi(new_melody, "generated_melody.mid")
+        # looks like fluidsynth inside the following caused seg fault
+        # convert_midi_to_wav("generated_melody.mid", "generated_melody.wav")
+
+        generate_num += 1
+        print("Done: ", datetime.now())
+
+    pass

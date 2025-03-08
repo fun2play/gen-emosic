@@ -28,19 +28,29 @@ Note:
 This class is intended to be used with a Transformer model that has been
 specifically trained for melody generation tasks.
 """
+import os
 
 import numpy as np
 import tensorflow as tf
 from melodypreprocessor import MelodyPreprocessor
 from transformer import Transformer
-from music_utils import save_melody_as_midi, midi_to_dataset_format
+from music_utils import midi_to_tokens, tokens_to_midi
 from music_utils import convert_midi_to_wav
+from datetime import datetime
+from keras.optimizers import Adam
+
+# Define the checkpoint directory
+CHECKPOINT_DIR = "checkpoints"
+CHECKPOINT_PREFIX = os.path.join(CHECKPOINT_DIR, "ckpt")
+# Ensure directory exists
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Global parameters
 EPOCHS = 10
 BATCH_SIZE = 32
-DATA_PATH = "dataset.json"
-MAX_POSITIONS_IN_POSITIONAL_ENCODING = 900 # 100
+DATA_PATH = "data/input/midi" # "dataset.json"
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 3000 # 1500 # 1000 # 900 # 100
+optimizer = Adam()
 
 class MelodyGenerator:
     """
@@ -79,7 +89,8 @@ class MelodyGenerator:
         emotion = np.array([[emotion]])  # Shape (1,1)
         sequence = start_sequence[:]
         sequence = np.array(sequence).reshape(1, -1)  # Shape (1, seq_len)
-        
+        generated_sequence = np.empty((1, 0), dtype=int)  # Ensures correct shape
+
         # predictions = transformer(
         #     input,
         #     target=target_input,
@@ -89,7 +100,7 @@ class MelodyGenerator:
         #     dec_padding_mask=None
         # )
 
-        for _ in range(self.max_length - len(start_sequence)):
+        for i in range(self.max_length - len(start_sequence)):
             # Convert input to Tensor
             input_tensor = tf.convert_to_tensor(sequence, dtype=tf.int64)
             emotion_tensor = tf.convert_to_tensor(emotion, dtype=tf.int64)
@@ -107,11 +118,13 @@ class MelodyGenerator:
             predicted_id = tf.random.categorical(predictions, num_samples=1).numpy()[0, 0]
             
             # Stop if end token is reached
-            if predicted_id == self.tokenizer.end_token:
+            stop_gen = False
+            if stop_gen: # or (self.tokenizer.end_token and predicted_id == self.tokenizer.end_token):
                 break
             
             # Append predicted token to sequence
             sequence = np.append(sequence, [[predicted_id]], axis=1)
+            generated_sequence = np.append(generated_sequence, [[predicted_id]], axis=1)
 
 #            predicted_note = self._get_note_with_highest_score(predictions)
 #            input_tensor = self._append_predicted_note(
@@ -121,7 +134,8 @@ class MelodyGenerator:
 #        generated_melody = self._decode_generated_sequence(input_tensor)
 
 #        return generated_melody
-        return sequence[0].tolist()  # Return generated melody tokens
+#         return sequence[0, len(start_sequence):].tolist()  # Return generated melody tokens
+        return generated_sequence[0].tolist()  # Return generated melody tokens
 
     def _get_input_tensor(self, start_sequence):
         """
@@ -180,16 +194,28 @@ class MelodyGenerator:
         )[0]
         return generated_melody
 
+def exitNow(yes=True):
+    if yes:
+        exit();
+
 if __name__ == "__main__":
+    print("Start melodygenerator.py: ", datetime.now())
+    # melody_preprocessor = MelodyPreprocessor(DATA_PATH, batch_size=BATCH_SIZE)
+    # vocab_size = 7000 # 6321 from melody_preprocessor.number_of_tokens_with_padding
     melody_preprocessor = MelodyPreprocessor(DATA_PATH, batch_size=BATCH_SIZE)
-    vocab_size = 500 # melody_preprocessor.number_of_tokens_with_padding
+    quitNow = False
+    exitNow(quitNow)
+    train_dataset = melody_preprocessor.create_training_dataset()
+    print("finished : melody_preprocessor.create_training_dataset() ", datetime.now())
+    exitNow(quitNow)
+    vocab_size = melody_preprocessor.number_of_tokens_with_padding
 
     transformer_model = Transformer(
         num_layers=2,
         d_model=64,
         num_heads=2,
         d_feedforward=128,
-        emotion_vocab_size=5,  # Emotion tokens are from 1 to 4
+        emotion_vocab_size = vocab_size,  # 5,  # Emotion tokens are from 1 to 4
         input_vocab_size=vocab_size,
         target_vocab_size=vocab_size,
         max_num_positions_in_pe_encoder=MAX_POSITIONS_IN_POSITIONAL_ENCODING,
@@ -199,17 +225,44 @@ if __name__ == "__main__":
 
     print("Generating a melody...")
     melody_generator = MelodyGenerator(
-        transformer_model, melody_preprocessor.tokenizer
+        transformer_model, melody_preprocessor.tokenizer, 3000
     )
 
     # input for generation
-    seedfilepathname = "data/input/seed/seed_Q1.mid"
+    seedfilepathname = "data/input/seed/seed_Q2.mid"
+    # seedfilepathname = "generated_melody_Q3.mid"
     emotion_label = 1
 
-    start_sequence = midi_to_dataset_format(seedfilepathname)
+    exitNow(quitNow)
+    start_sequence = midi_to_tokens(seedfilepathname)
     # start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]
+    exitNow(quitNow)
+
+    # Create a Checkpoint Manager
+    checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=transformer_model)
+    checkpoint_manager = tf.train.CheckpointManager(checkpoint, CHECKPOINT_DIR, max_to_keep=5)
+    # Load the latest checkpoint
+    if tf.train.latest_checkpoint(CHECKPOINT_DIR):
+        checkpoint.restore(tf.train.latest_checkpoint(CHECKPOINT_DIR))
+        print("Checkpoint restored. Resuming training from latest checkpoint...")
+    else:
+        print("No checkpoint found. Starting training from scratch...")
+
+    exitNow(quitNow)
+
     new_melody = melody_generator.generate_melody(emotion_label, start_sequence)
     print(f"Generated melody: {new_melody}")
 
-    save_melody_as_midi(new_melody, "generated_melody.mid")
-    convert_midi_to_wav("generated_melody.mid", "generated_melody.wav")
+    exitNow(quitNow)
+
+    tokens_to_midi(new_melody, "data/input/seed/gen_fr_seed_Q2.mid")
+    # looks like fluidsynth inside the following caused seg fault
+    # convert_midi_to_wav("generated_melody.mid", "generated_melody.wav")
+
+    exitNow(quitNow)
+
+    print("Done: ", datetime.now())
+
+    quitNow = True
+    # exitNow(quitNow)
+

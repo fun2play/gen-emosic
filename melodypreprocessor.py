@@ -33,7 +33,7 @@ import json
 import numpy as np
 import tensorflow as tf
 
-from music_utils import midi_to_dataset_format
+from music_utils import midi_to_tokens
 
 # from keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.text import Tokenizer
@@ -81,26 +81,26 @@ class MelodyPreprocessor:
                 pairs suitable for training a sequence-to-sequence model.
         """
         dataset_with_emotions = self._load_dataset_with_emotions()  # Use emotion-tagged dataset
-        parsed_melodies = [(emotion, self._parse_melody(melody)) for emotion, melody in dataset_with_emotions]
+        parsed_melodies = [(emotion, melody) for emotion, melody in dataset_with_emotions]
         tokenized_melodies = [(emotion, self._tokenize_and_encode_melody(emotion, melody)) for emotion, melody in parsed_melodies] # TODO [(3,[]),(...
 
         self._set_max_melody_length([melody for _, melody in tokenized_melodies])
         self._set_number_of_tokens()
 
-        input_sequences, emotion_sequences, target_sequences = self._create_sequence_pairs(tokenized_melodies)
 
+        input_sequences, emotion_sequences, target_sequences = self._create_sequence_pairs(tokenized_melodies)
         tf_training_dataset = self._convert_to_tf_dataset(input_sequences, emotion_sequences, target_sequences)
         return tf_training_dataset
 
-    def _load_dataset(self): # TODO to be removed as it's replaced by _load_dataset_with_emotions
-        """
-        Loads the melody dataset from a JSON file.
-
-        Returns:
-            list: A list of melodies from the dataset.
-        """
-        with open(self.dataset_path, "r") as f:
-            return json.load(f)
+    # def _load_dataset(self): # TODO to be removed as it's replaced by _load_dataset_with_emotions
+    #     """
+    #     Loads the melody dataset from a JSON file.
+    #
+    #     Returns:
+    #         list: A list of melodies from the dataset.
+    #     """
+    #     with open(self.dataset_path, "r") as f:
+    #         return json.load(f)
 
     def _load_dataset_with_emotions(self):
         """
@@ -114,12 +114,12 @@ class MelodyPreprocessor:
         midi_folder = self.dataset_path
 
         for filename in os.listdir(midi_folder):
-            if filename.endswith(".mid") or filename.endswith(".midi"):
+            if filename.endswith(".mid") or filename.endswith(".midi"): # example name "Q1_0vLPYiPN7qY_0.mid"
                 if len(filename) >= 4:  # like "Q3_asdfasfas"
-                    emotion = filename[1]  # filename.split("_")[0]  # Extract Q1, Q2, Q3, or Q4
+                    emotion = "EQ" + filename[1]  # filename.split("_")[0]  # Set prefix EQ as EQ1, EQ2, EQ3, EQ4 to be UNIQUE emotions words and different from music tokens words
                 else:
                     continue
-                melody = midi_to_dataset_format(os.path.join(midi_folder, filename))
+                melody = midi_to_tokens(os.path.join(midi_folder, filename))
                 dataset.append((emotion, melody))
                 # dataset.append(f"{emotion}, {melody}")
 
@@ -147,9 +147,52 @@ class MelodyPreprocessor:
         Returns:
             list: Tokenized and encoded melody.
         """
-        self.tokenizer.fit_on_texts(list(emotion)) # emotions))  # Train on both melodies and emotions
-        self.tokenizer.fit_on_texts(list(melody))  # Train on both melodies and emotions
-        return self.tokenizer.texts_to_sequences([melody])[0]  # Convert melody to tokens
+        tok_seq = melody # self.tokenizer.midi_to_tokens(melody)  # Convert MIDI to token sequence
+        token_ids = tok_seq.ids  # Extract tokenized IDs
+        # unique_tokens = set(tok_seq.tokens)  # Get unique token strings
+        tokens = tok_seq.tokens
+
+        # tokens = melody
+        self.tokenizer.fit_on_texts(list([emotion]))   # emotion)) # emotions))  # Train on both melodies and emotions
+        self.tokenizer.fit_on_texts(list(tokens))  # Train on both melodies and emotions
+        # self.tokenizer.fit_on_texts([str(token) for token in melody])  # Ensure all tokens are strings
+        return self.tokenizer.texts_to_sequences([tokens])[0]  # Convert melody to tokens
+        # return token_ids  # Return tokenized IDs
+
+        # TODO more modifiecation needed to skip fit_on_texts above so to be safe, still use them above
+        # index_just_constructed = not self.tokenizer.word_index
+        # if index_just_constructed:
+        #     self.tokenizer.word_index = {}
+        # word_indices = self.tokenizer.word_index
+        # new_word_index = len(word_indices) + 1
+        # for word in enumerate(unique_tokens):
+        #     if index_just_constructed or word not in word_indices:
+        #         word_indices[word] = new_word_index
+        #         self.tokenizer.index_word[new_word_index] = word
+        #         new_word_index += 1
+        #
+        # if not self.tokenizer.word_index:
+        #     # self.tokenizer.word_index = {word: i + 1 for i, word in enumerate(unique_tokens)}
+        #     # self.tokenizer.index_word = {i + 1: word for i, word in enumerate(unique_tokens)}
+        #
+        #     # Initialize word counts and docs
+        #     self.tokenizer.word_counts = {word: tok_seq.tokens.count(word) for word in unique_tokens}
+        #
+        #     # Count how many different melodies contain each token
+        #     self.tokenizer.word_docs = {word: 0 for word in unique_tokens}
+        #     self.tokenizer.index_docs = {i + 1: 0 for i, word in enumerate(unique_tokens)}
+        #
+        # # Update document frequency counts
+        # for word in unique_tokens:
+        #     try:
+        #         self.tokenizer.word_docs[word] += 1  # Increment doc count for token
+        #     except Exception as e:
+        #         pass
+        #     token_id = self.tokenizer.word_index[word]  # Get corresponding ID
+        #     self.tokenizer.index_docs[token_id] += 1  # Increment index_docs
+        #
+        # return token_ids  # Return tokenized IDs
+
 
     def _tokenize_and_encode_melodies(self, melodies_with_emotions):
         """
