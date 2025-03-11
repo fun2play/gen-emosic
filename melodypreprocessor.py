@@ -29,14 +29,20 @@ specific format, where each melody is represented as a string of comma-separated
 musical notes (pitch with octave + duration in quarter length).
 """
 import json
+import multiprocessing
+import os
+import sys
 
 import numpy as np
 import tensorflow as tf
 
+from misc_utils import MULTIPROCESS_loop, available_memory_gb
 from music_utils import midi_to_tokens
 
 # from keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.text import Tokenizer
+
+from pympler import asizeof
 
 class MelodyPreprocessor:
     """
@@ -80,17 +86,33 @@ class MelodyPreprocessor:
             tf_training_dataset: A TensorFlow dataset containing input-target
                 pairs suitable for training a sequence-to-sequence model.
         """
-        dataset_with_emotions = self._load_dataset_with_emotions()  # Use emotion-tagged dataset
+        # ataset_with_emotions: [('EQ2', TokSequence),()]
+        dataset_with_emotions = self._load_dataset_with_emotions_multiprocessing()  # Use emotion-tagged dataset
         parsed_melodies = [(emotion, melody) for emotion, melody in dataset_with_emotions]
+        # "emotion" in following is token ('EQ2') instead of Id.
+        # BUT "melodies" are Ids/sequences. TODO Following need to be sync-ed for word_index etc setting. so More to do to optimize loop in next line
         tokenized_melodies = [(emotion, self._tokenize_and_encode_melody(emotion, melody)) for emotion, melody in parsed_melodies] # TODO [(3,[]),(...
 
         self._set_max_melody_length([melody for _, melody in tokenized_melodies])
         self._set_number_of_tokens()
 
+        # Create a tf.data.Dataset from the generator.
+        output_signature = (
+            tf.TensorSpec(shape=(self.max_melody_length,), dtype=tf.int32),
+            tf.TensorSpec(shape=(), dtype=tf.int32),  # emotion token is a scalar
+            tf.TensorSpec(shape=(self.max_melody_length,), dtype=tf.int32)
+        )
+        # _create_sequence_pairs_generator below will convert emotion 'EQ2' to its Id
+        dataset = tf.data.Dataset.from_generator(
+            lambda: self._create_sequence_pairs_generator(tokenized_melodies, stride=5),
+            output_signature=output_signature
+        )
+        dataset = dataset.shuffle(buffer_size=1000).batch(self.batch_size)
+        return dataset
 
-        input_sequences, emotion_sequences, target_sequences = self._create_sequence_pairs(tokenized_melodies)
-        tf_training_dataset = self._convert_to_tf_dataset(input_sequences, emotion_sequences, target_sequences)
-        return tf_training_dataset
+        # input_sequences, emotion_sequences, target_sequences = self._create_sequence_pairs(tokenized_melodies)
+        # tf_training_dataset = self._convert_to_tf_dataset(input_sequences, emotion_sequences, target_sequences)
+        # return tf_training_dataset
 
     # def _load_dataset(self): # TODO to be removed as it's replaced by _load_dataset_with_emotions
     #     """
@@ -101,6 +123,53 @@ class MelodyPreprocessor:
     #     """
     #     with open(self.dataset_path, "r") as f:
     #         return json.load(f)
+
+    def process_midi_file(self, data):
+        """
+        Process a single MIDI file: extract emotion and tokenize melody.
+        """
+        filename, midi_folder = data
+        # example name "Q1_0vLPYiPN7qY_0.mid"
+        if not (filename.endswith(".mid") or filename.endswith(".midi")):
+            return None  # Skip non-MIDI files
+        if len(filename) < 4:
+            return None  # Skip invalid filenames
+
+        # filename.split("_")[0]  # Set prefix EQ as EQ1, EQ2, EQ3, EQ4 to be UNIQUE emotions words and different from music tokens words
+        emotion = "EQ" + filename[1]  # Unique emotion prefix (EQ1, EQ2, EQ3, EQ4)
+        melody = midi_to_tokens(os.path.join(midi_folder, filename))  # Tokenize MIDI
+        # Truncate melody to a fixed length to speed up training
+        MAX_MELODY_LENGTH = 1024  # Adjust this based on your memory constraints
+        # melody = melody[:MAX_MELODY_LENGTH] # TODO TODO
+
+        ''' truncate to 1024 will get following error. TODO why
+    File "/home/user96/Dev/ai-musicGen/Bill/gen-emosic/venv-3.8.1_dcontainer/lib/python3.8/site-packages/keras/src/layers/core/dense.py", line 244, in call
+      outputs = tf.tensordot(inputs, self.kernel, [[rank - 1], [0]])
+Node: 'transformer/dense_8/Tensordot'
+Input to reshape is a tensor with 3225600 values, but the requested shape has 3210240
+	 [[{{node transformer/dense_8/Tensordot}}]] [Op:__inference__train_step_13804]
+'''
+        # if (len(melody) > 1024):
+        #     melody = melody[:1024]
+            # return (emotion, [])  # Empty melody instead of None
+            # return None
+
+        return (emotion, melody)  # Return the processed result
+
+    def _load_dataset_with_emotions_multiprocessing(self):
+        """
+        Load and process MIDI files using multiprocessing.
+        """
+        midi_folder = self.dataset_path
+        filenames = os.listdir(midi_folder)
+
+        # Use multiprocessing to process MIDI files in parallel
+        results = MULTIPROCESS_loop(self.process_midi_file, [(filename, midi_folder) for filename in filenames])
+
+        # Remove None values (in case of skipped files)
+        dataset = [res for res in results if res is not None]
+
+        return dataset
 
     def _load_dataset_with_emotions(self):
         """
@@ -147,12 +216,9 @@ class MelodyPreprocessor:
         Returns:
             list: Tokenized and encoded melody.
         """
-        tok_seq = melody # self.tokenizer.midi_to_tokens(melody)  # Convert MIDI to token sequence
-        token_ids = tok_seq.ids  # Extract tokenized IDs
         # unique_tokens = set(tok_seq.tokens)  # Get unique token strings
-        tokens = tok_seq.tokens
+        tokens = melody
 
-        # tokens = melody
         self.tokenizer.fit_on_texts(list([emotion]))   # emotion)) # emotions))  # Train on both melodies and emotions
         self.tokenizer.fit_on_texts(list(tokens))  # Train on both melodies and emotions
         # self.tokenizer.fit_on_texts([str(token) for token in melody])  # Ensure all tokens are strings
@@ -225,38 +291,51 @@ class MelodyPreprocessor:
         """
         self.number_of_tokens = len(self.tokenizer.word_index)
 
-    def _create_sequence_pairs(self, melodies_with_emotions):
+    def _create_sequence_pairs_generator(self, melodies_with_emotions, stride=1):
+    # def _create_sequence_pairs(self, melodies_with_emotions):
         """
         Creates input-target pairs from tokenized melodies.
 
         Parameters:
             melodies_with_emotions (list): A list of (emotion, tokenized_melody) tuples.
-
+sx
         Returns:
             tuple: Three numpy arrays representing input sequences, emotion sequences, and target sequences.
         """
-        input_sequences, target_sequences, emotion_sequences = [], [], []
+        # input_sequences, target_sequences, emotion_sequences = [], [], []
 
+        k = 0
         for emotion, melody in melodies_with_emotions:
+            k += 1
             # tokenized_melody = self.tokenizer.texts_to_sequences([melody])[0]
-            emotion_token = self.tokenizer.texts_to_sequences([emotion])
-            if emotion_token and emotion_token[0]:  # Ensure the token exists
-                emotion_token = emotion_token[0][0]
+            emotion_seq = self.tokenizer.texts_to_sequences([emotion]) # e.g. 'EQ2' to its id
+            if emotion_seq and emotion_seq[0]:  # Ensure the token exists
+                emotion_seq = emotion_seq[0][0]
             else:
                 raise ValueError(f"Emotion '{emotion}' was not found in tokenizer vocabulary.")
 
-            for i in range(1, len(melody)):
+            # available_mem_gb = available_memory_gb()
+            # if available_mem_gb < 20:
+            #     input_sequences_size = asizeof(target_seq)
+            #     pass
+            # elif available_mem_gb < 10:
+            #     pass
+            # elif available_mem_gb < 5:
+            #     pass
+
+            for i in range(1, len(melody), stride):
                 input_seq = melody[:i]
                 target_seq = melody[1:i + 1]
 
                 padded_input_seq = self._pad_sequence(input_seq)
                 padded_target_seq = self._pad_sequence(target_seq)
 
-                input_sequences.append(padded_input_seq)
-                target_sequences.append(padded_target_seq)
-                emotion_sequences.append(emotion_token)
+                # input_sequences.append(padded_input_seq)
+                # target_sequences.append(padded_target_seq)
+                # emotion_sequences.append(emotion_seq)
+                yield padded_input_seq, emotion_seq, padded_target_seq
 
-        return np.array(input_sequences), np.array(emotion_sequences), np.array(target_sequences)
+        # return np.array(input_sequences), np.array(emotion_sequences), np.array(target_sequences)
 
     def _pad_sequence(self, sequence):
         """

@@ -28,6 +28,20 @@ and generating a sample melody using the trained model.
 
 import os
 import tensorflow as tf
+
+######################## need to "set GPU Memory growth" before other "imports" #########
+# forces TensorFlow to allocate memory gradually instead of pre-allocating the entire GPU
+gpus = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+
+# following to avoid GPU OOM
+from tensorflow.keras import mixed_precision
+# Enable mixed precision (saves memory)
+mixed_precision.set_global_policy("mixed_float16")
+# Set TensorFlow GPU Allocator
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+
 from keras.losses import SparseCategoricalCrossentropy
 from keras.optimizers import Adam
 from melodygenerator import MelodyGenerator
@@ -55,7 +69,6 @@ from music_utils import midi_to_tokens, tokens_to_midi
 #
 # print("Num CPUs Available:", len(tf.config.list_physical_devices('CPU')))
 
-
 # Define the checkpoint directory
 CHECKPOINT_DIR = "checkpoints"
 CHECKPOINT_PREFIX = os.path.join(CHECKPOINT_DIR, "ckpt")
@@ -64,9 +77,9 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Global parameters
 EPOCHS = 1 # 10
-BATCH_SIZE = 32
+BATCH_SIZE = 15 # 8 # 16 or 32 cause GPU OOM
 DATA_PATH = "data/input/midi" # "dataset.json"
-MAX_POSITIONS_IN_POSITIONAL_ENCODING = 3000 # 1500 # 1000 # 900 # 100  900 is critical part to make training with shape mismatch issue
+MAX_POSITIONS_IN_POSITIONAL_ENCODING = 2048 # 3000 # 1500 # 1000 # 900 # 100  900 is critical part to make training with shape mismatch issue
 
 # Loss function and optimizer
 sparse_categorical_crossentropy = SparseCategoricalCrossentropy(
@@ -89,10 +102,14 @@ def train(train_dataset, transformer, epochs, checkpoint):
         total_loss = 0
         # Iterate over each batch in the training dataset
         for (batch, (input, emotion, target)) in enumerate(train_dataset):
-            # Perform a single training step
-            batch_loss = _train_step(input, emotion=emotion, target=target, transformer=transformer)
-            total_loss += batch_loss
-            print(datetime.now(), f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}")
+            try:
+                # Perform a single training step
+                batch_loss = _train_step(input, emotion=emotion, target=target, transformer=transformer)
+                total_loss += batch_loss
+                print(datetime.now(), f"Epoch {epoch + 1} Batch {batch + 1} Loss {batch_loss.numpy()}")
+            except Exception as ex:
+                print(f"Exception: {ex}")
+                pass
 
         # Save the model after every epoch
         checkpoint.save(file_prefix=CHECKPOINT_PREFIX)
@@ -211,6 +228,9 @@ def _right_pad_sequence_once(sequence):
     Returns:
         tf.Tensor: The padded sequence.
     """
+    # max_length = 1024  # Ensure padding up to max length
+    # padding_size = max_length - tf.shape(sequence)[1]
+    # return tf.pad(sequence, [[0, 0], [0, padding_size]], "CONSTANT")
     return tf.pad(sequence, [[0, 0], [0, 1]], "CONSTANT")
 
 
@@ -220,6 +240,8 @@ if __name__ == "__main__":
     train_dataset = melody_preprocessor.create_training_dataset()
     print("finished : melody_preprocessor.create_training_dataset() ", datetime.now())
     vocab_size = melody_preprocessor.number_of_tokens_with_padding
+
+    MAX_POSITIONS_IN_POSITIONAL_ENCODING = max(2048, melody_preprocessor.max_melody_length) # or set it to a number ≥ longest sequence
 
     transformer_model = Transformer(
         num_layers=2,
@@ -244,6 +266,30 @@ if __name__ == "__main__":
     else:
         print("No checkpoint found. Starting training from scratch...")
 
+
+
+    # # In train.py, after creating your model and before training:
+    # dummy_seq_len = melody_preprocessor.max_melody_length  # should be 1024 now
+    # dummy_inp = tf.random.uniform(
+    #     (1, dummy_seq_len), dtype=tf.int64, minval=0, maxval=vocab_size - 1
+    # )
+    # dummy_tar = tf.random.uniform(
+    #     (1, dummy_seq_len), dtype=tf.int64, minval=0, maxval=vocab_size - 1
+    # )
+    # emotion_input = tf.expand_dims(list([1]), axis=1)  # Add sequence dimension, using 1 as dummy
+    # # Build the model with the correct sequence length:
+    # transformer_model(
+    #     dummy_inp,
+    #     emotion_input,
+    #     dummy_tar,
+    #     training=False,
+    #     enc_padding_mask=None,
+    #     look_ahead_mask=None,
+    #     dec_padding_mask=None,
+    # )
+
+
+
     # Train and save after each epoch
     train(train_dataset, transformer=transformer_model, epochs=EPOCHS, checkpoint=checkpoint)
 
@@ -256,13 +302,13 @@ if __name__ == "__main__":
         transformer_model, melody_preprocessor.tokenizer, 2500
     )
 
-    generate_music = True
+    generate_music = False # True
     generate_num = 1
     while generate_music and generate_num <= 5:
         # input for generation
         seedfilepathname = "data/input/midi_200/Q3_c6CwY8Gbw0c_3.mid" # "data/input/seed/seed_Q4.mid"
         # seedfilepathname = "generated_melody_Q3.mid"
-        emotion_label = 3
+        emotion_label = "EQ3"
 
         start_sequence = midi_to_tokens(seedfilepathname)
         # start_sequence = ["C4-1.0", "D4-1.0", "E4-1.0", "C4-1.0"]

@@ -28,6 +28,7 @@ Note:
 This implementation of the Transformer model is designed for flexibility and can be
 adapted for various sequence-to-sequence tasks beyond music generation.
 """
+from logging import exception
 
 import numpy as np
 import tensorflow as tf
@@ -67,7 +68,7 @@ def sinusoidal_position_encoding(num_positions, d_model):
     pos_encoding = np.concatenate([sines, cosines], axis=-1)
     pos_encoding = pos_encoding[np.newaxis, ...]  # (1, position, d_model)
 
-    return tf.cast(pos_encoding, dtype=tf.float32)
+    return tf.cast(pos_encoding, dtype=tf.float16) # dtype=tf.float32)
 
 
 def _get_angles(pos, i, d_model):
@@ -187,14 +188,6 @@ class Transformer(tf.keras.Model):
         #    shape: (batch_size, seq_len, d_model)
         # input_with_emotion = tf.concat([emotion_emb, input_emb], axis=1)
 
-        print(f"Input shape: {input.shape}")  # Should match expected batch size
-        print(f"Emotion shape: {emotion.shape}")  # Should be (batch_size, 1)
-        print(f"Target shape: {target.shape}")  # Should match input
-        print(f"Input embedding shape: {melody_emb.shape}")  # Check if matches d_model
-        print(f"Emotion embedding shape: {emotion_emb.shape}")
-        print(f"Input with emotion shape: {input_with_emotion.shape}")  # Should be same shape as input
-        print(f"Encoder positional encoding shape: {self.encoder.pos_encoding.shape}")
-
         # 5. Pass the pre-embedded float to the encoder (which no longer does embedding):
         enc_output = self.encoder(
             input_with_emotion,
@@ -215,7 +208,21 @@ class Transformer(tf.keras.Model):
         #    shape: (batch_size, target_seq_len, d_model)
 
         # 7. Final linear projection:
-        logits = self.final_layer(dec_output)
+        if 1 == 2:
+            print(f"Input shape: {input.shape}")  # Should match expected batch size
+            print(f"Emotion shape: {emotion.shape}")  # Should be (batch_size, 1)
+            print(f"Target shape: {target.shape}")  # Should match input
+            print(f"Input embedding shape: {melody_emb.shape}")  # Check if matches d_model
+            print(f"Emotion embedding shape: {emotion_emb.shape}")
+            print(f"Input with emotion shape: {input_with_emotion.shape}")  # Should be same shape as input
+            print(f"Encoder positional encoding shape: {self.encoder.pos_encoding.shape}")
+            print(f"Decoder output shape before Dense layer: {dec_output.shape}")
+            print(f"Expected target_vocab_size for Dense layer: {self.final_layer.units}")
+        try:
+            logits = self.final_layer(dec_output)
+        except Exception:
+            pass
+
         # print(f"Encoder output shape: {enc_output.shape}")
         return logits
 
@@ -279,7 +286,7 @@ class Encoder(tf.keras.layers.Layer):
 
         # x is already a float of shape (batch, seq_len, d_model)
         # (2) We can still scale by sqrt(d_model) if you like that convention:
-        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float16)) # tf.float32)) to avoid mismatch with x
 
         # (3) Add positional encoding:
         sliced_pos_encoding = self._get_sliced_positional_encoding(x)
@@ -370,7 +377,7 @@ class Decoder(tf.keras.layers.Layer):
         """
 
         x = self.embedding(x)  # (batch_size, target_seq_len, d_model)
-        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
+        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float16)) # tf.float32))
 
         sliced_pos_encoding = self._get_sliced_positional_encoding(x)
         x += sliced_pos_encoding

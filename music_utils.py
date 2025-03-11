@@ -173,13 +173,15 @@ from symusic import Score
 
 def midiTok_midi_to_tokens(midi_file_path):
     # Creating a multitrack tokenizer, read the doc to explore all the parameters
-    config = TokenizerConfig(num_velocities=16, use_chords=True, use_programs=True)
+    config = TokenizerConfig(num_velocities=16, use_chords=True,
+                             use_programs=True # some issue using False,  # no multitrack here so False
+                             )
     tokenizer = REMI(config)
 
     # Loads a midi, converts to tokens, and back to a MIDI
     midi = Score(midi_file_path)
-    tokens = tokenizer(midi)  # calling the tokenizer will automatically detect MIDIs, paths and tokens
-    return tokens
+    tokSeq = tokenizer(midi)  # calling the tokenizer will automatically detect MIDIs, paths and tokens
+    return tokSeq.tokens
 
 def midiTok_tokens_to_midi(tokens, output_midi_path, ticks_per_beat=480):
     # Creating a multitrack tokenizer, read the doc to explore all the parameters
@@ -192,7 +194,7 @@ def midiTok_tokens_to_midi(tokens, output_midi_path, ticks_per_beat=480):
     converted_back_midi.dump_midi(output_midi_path)
     converted_back_midi.dump_abc(output_midi_path + ".abc")
 
-    print("MIDI file successfully saved as 'fr_seed_Q1_by_midiTok.mid'")
+    print(f"MIDI file successfully saved as {output_midi_path}")
 
 #####################################################################################################
 ### interface pair: #################################################################################
@@ -208,12 +210,13 @@ def tokens_to_midi(tokens, output_midi_path, ticks_per_beat=480):
 # Example usage:
 if __name__ == '__main__':
     # Replace with your actual file paths
-    input_midi = "data/input/seed/seed_Q1.mid" # "data/input/seed/seed_Q4.mid"
-    output_midi = "data/input/seed/test_fr_seed_Q1.mid"
+    input_midi = "data/input/seed/seed_Q2.mid" # "data/input/seed/seed_Q4.mid"
+    output_midi = "data/input/seed/test_fr_seed_Q2.mid"
 
     # Convert MIDI file to tokens
-    tokens = midi_to_tokens(input_midi)
-    print("Tokens generated from MIDI:", tokens)
+    tokSeq = midi_to_tokens(input_midi)
+    print("Tokens generated from MIDI:", tokSeq)
+    tokens = tokSeq.tokens
 
     # Convert tokens back to a MIDI file
     tokens_to_midi(tokens, output_midi)
