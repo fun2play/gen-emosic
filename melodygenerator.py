@@ -225,7 +225,7 @@ if __name__ == "__main__":
     exitNow(quitNow)
     vocab_size = melody_preprocessor.number_of_tokens_with_padding
 
-    # MAX_POSITIONS_IN_POSITIONAL_ENCODING = max(2048, melody_preprocessor.max_melody_length) # or set it to a number ≥ longest sequence
+    MAX_POSITIONS_IN_POSITIONAL_ENCODING = max(2048, melody_preprocessor.max_melody_length) # or set it to a number ≥ longest sequence
 
     transformer_model = Transformer(
         num_layers=2,
