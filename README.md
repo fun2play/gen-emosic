@@ -16,6 +16,7 @@ In this project, I significantly expanded upon Valerio Valardo's Sound of AI by 
 Through these contributions, the updated model demonstrates improved emotional expressivity and adaptability in generated melodies.
 
 
+<img width="533" alt="Screenshot 2025-03-13 at 11 23 22 AM" src="https://github.com/user-attachments/assets/bd62aaa7-0e17-40e6-890b-38b6b2ec1968" />
 
 
 ## Acknowledgements
