@@ -3,6 +3,8 @@
 
 # Contributions
 
+NOTE: This project only works with Python 3.8 and will not run with Python 3.12 and also requires some modules to be installed (will update detailed instructions later)
+
 In this project, I significantly expanded upon Valerio Valardo's Sound of AI by integrating emotional context into melody generation. Specifically, my contributions include:
 
 **Emotion Integration**: Incorporated emotion-based conditioning using Russell's 4Q emotional model (Q1: happy, Q2: angry, Q3: sad, Q4: relaxed) to intentionalize the melodic output's impact
@@ -11,7 +13,7 @@ In this project, I significantly expanded upon Valerio Valardo's Sound of AI by 
 
 **Seed Music Implementation**: Implemented functionality to accept user-provided seed MIDI files, enabling the model to generate emotionally coherent continuations or variations based on the emotional quadrant selected by the user.
 
-**Model Training**: Retrained and fine-tuned the Transformer-based model from Sound of AI using the emotion-labeled EMOPIA dataset alongside seed MIDI inputs to achieve nuanced, emotion-driven melody generation. (NOTE: Sound of AI and this project only works with Python 3.8, and will not run with Python Version 3.12)
+**Model Training**: Retrained and fine-tuned the Transformer-based model from Sound of AI using the emotion-labeled EMOPIA dataset alongside seed MIDI inputs to achieve nuanced, emotion-driven melody generation. (NOTE: This project only works with Python 3.8 due to Sound of AI being last updated 2023)
 
 Through these contributions, the updated model demonstrates improved emotional expressivity and adaptability in generated melodies.
 
