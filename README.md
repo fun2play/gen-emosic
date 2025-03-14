@@ -11,9 +11,11 @@ In this project, I significantly expanded upon Valerio Valardo's Sound of AI by 
 
 **Seed Music Implementation**: Implemented functionality to accept user-provided seed MIDI files, enabling the model to generate emotionally coherent continuations or variations based on the emotional quadrant selected by the user.
 
-**Model Training**: Retrained and fine-tuned the Transformer-based model from Sound of AI using the emotion-labeled EMOPIA dataset alongside seed MIDI inputs to achieve nuanced, emotion-driven melody generation.
+**Model Training**: Retrained and fine-tuned the Transformer-based model from Sound of AI using the emotion-labeled EMOPIA dataset alongside seed MIDI inputs to achieve nuanced, emotion-driven melody generation. (NOTE: Sound of AI and this project only works with Python 3.8, and will not run with Python Version 3.12)
 
 Through these contributions, the updated model demonstrates improved emotional expressivity and adaptability in generated melodies.
+
+
 
 
 <img width="533" alt="Screenshot 2025-03-13 at 11 23 22 AM" src="https://github.com/user-attachments/assets/bd62aaa7-0e17-40e6-890b-38b6b2ec1968" />
